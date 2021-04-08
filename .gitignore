@@ -1,0 +1,6 @@
+dist/
+build/
+src/piper/_version.py
+*.swp
+*.egg-info
+__pycache__
