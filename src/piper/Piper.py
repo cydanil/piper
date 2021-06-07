@@ -3,7 +3,6 @@
 # Created on April 08, 2021, 02:10 PM
 # Copyright (C) European XFEL GmbH Hamburg. All rights reserved.
 #############################################################################
-import os
 import threading
 import time
 
@@ -12,7 +11,7 @@ import numpy as np
 from pathlib import Path
 from karabo.bound import (PythonDevice, INPUT_CHANNEL, KARABO_CLASSINFO,
                           SLOT_ELEMENT, OUTPUT_CHANNEL, Schema, State, Hash,
-                          Epochstamp, Trainstamp, Timestamp)
+                          Epochstamp, Trainstamp, Timestamp, STRING_ELEMENT)
 
 from ._version import version as deviceVersion
 
@@ -34,6 +33,12 @@ class Piper(PythonDevice):
             .displayedName('Input')
             # .dataSchema(Schema())
             .commit(),
+
+            STRING_ELEMENT(expected).key('saveTo')
+            .assignmentOptional()
+            .defaultValue('/gpfs/exfel/data/scratch/danilevc/lpd_data_to_validate/Q2M1_cell_8_relgain_only')
+            .reconfigurable()
+            .commit(),
         )
 
     def __init__(self, configuration):
@@ -44,6 +49,7 @@ class Piper(PythonDevice):
         self.registerInitialFunction(self.initialization)
         t = threading.Thread(target=self.serve)
         t.start()
+        self.saved_count = 0
 
     def initialization(self):
         """This method will be called after the constructor.
@@ -85,11 +91,15 @@ class Piper(PythonDevice):
             time.sleep(0.1)
 
     def onData(self, data, meta):
-        fname = meta['source'].replace('/', '_').replace(':', '_')
-        fname = f"{fname}_{data['image.trainId'][0]}.npy"
-        path = Path(os.environ['HOME']) / 'data_to_validate'
-        path.mkdir(exist_ok=True)
-        path = path / fname
-        print(path, end=' ')
-        np.save(path, data['image.data'])
-        print('saved')
+        try:
+            fname = meta['source'].replace('/', '_').replace(':', '_')
+            fname = f"{fname}_{data['image.trainId'][0]}.npy"
+            path = Path(self.get('saveTo'))
+            path.mkdir(exist_ok=True)
+            path = path / fname
+            print(path, end=' ')
+            np.save(path, data['image.data'][:, :, 0])
+            print(f'saved ({self.saved_count})')
+        except Exception:
+            print(data.keys(), data)
+        self.saved_count += 1
