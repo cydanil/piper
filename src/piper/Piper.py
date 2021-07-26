@@ -88,6 +88,26 @@ class Piper(PythonDevice):
 
         )
 
+        NODE_ELEMENT(expected).key('preview').commit()
+
+        preview_schema = Schema()
+
+        (
+            IMAGEDATA_ELEMENT(preview_schema).key('image')
+            .displayedName('Raw')
+            .setDimensions([PIXELS, PIXELS])
+            .setType(Types.UINT32)
+            .commit(),
+
+            OUTPUT_CHANNEL(expected).key('preview.previewOutput')
+            .dataSchema(preview_schema)
+            .commit(),
+
+            SLOT_ELEMENT(expected).key('mimicCombiner')
+            .displayedName('Combiner-type output')
+            .commit(),
+        )
+
     def __init__(self, configuration):
         super().__init__(configuration)
         self.registerInitialFunction(self.initialization)
@@ -97,11 +117,15 @@ class Piper(PythonDevice):
         self.thread_3out = threading.Thread(target=self.serve_triple_output)
         self.thread_3out.start()
 
+        self.thread_mimiccombiner = threading.Thread(target=self.mimic_combiner)  # noqa
+        self.thread_mimiccombiner.start()
+
         self.saved_count = 0
 
     def initialization(self):
         self.KARABO_SLOT(self.thingy)
         self.KARABO_SLOT(self.spit3Images)
+        self.KARABO_SLOT(self.mimicCombiner)
         self.updateState(State.NORMAL)
         self.KARABO_ON_DATA("input", self.onData)
 
@@ -142,6 +166,38 @@ class Piper(PythonDevice):
             print(data.keys(), data)
         self.saved_count += 1
 
+    def mimicCombiner(self):
+        state = State.RUNNING if self['state'] == State.NORMAL else State.NORMAL  # noqa
+        self.updateState(state)
+
+    def mimic_combiner(self):
+        acq_rate = RateCalculator(refresh_interval=1)
+        data = [np.array([100] * PIXELS * PIXELS, dtype=np.uint32).reshape([PIXELS, PIXELS]),  # noqa
+                np.array([200] * PIXELS * PIXELS, dtype=np.uint32).reshape([PIXELS, PIXELS]),  # noqa
+                np.array([300] * PIXELS * PIXELS, dtype=np.uint32).reshape([PIXELS, PIXELS])]  # noqa
+        cycles = cycler(data=data)()
+
+        h = Hash()
+
+        tid = 0
+
+        while True:
+            if self['state'] == State.RUNNING:
+                data = next(cycles)
+                h['image'] = ImageData(data['data'])
+                timestamp = Timestamp(Epochstamp(), Trainstamp(tid))
+                self.writeChannel('preview.previewOutput',
+                                  h,
+                                  timestamp)
+
+                acq_rate.update()
+                rate = acq_rate.refresh()
+                if rate is not None:
+                    self['frameRate'] = rate
+                tid += 1
+
+            time.sleep(0.1)
+
     def spit3Images(self):
         state = State.PROCESSING if self['state'] == State.NORMAL else State.NORMAL  # noqa
         self.updateState(state)
@@ -179,5 +235,9 @@ class Piper(PythonDevice):
         """Stop the threads."""
         self.thread_serve.done = True
         self.thread_serve.join()
+
         self.thread_3out.done = True
         self.thread_3out.join()
+
+        self.thread_mimiccombiner.done = True
+        self.thread_mimiccombiner.join()
